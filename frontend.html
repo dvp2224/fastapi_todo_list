@@ -1,0 +1,1072 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>✨ Modern To-Do List</title>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        .spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #3498db;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .fade-in {
+            animation: fadeIn 0.3s ease-in;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .slide-up {
+            animation: slideUp 0.2s ease-out;
+        }
+        @keyframes slideUp {
+            from { transform: translateY(100%); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+        .task-complete {
+            animation: completeTask 0.3s ease-in-out;
+        }
+        @keyframes completeTask {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+            100% { transform: scale(1); }
+        }
+        .gradient-bg {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+        .glass-effect {
+            backdrop-filter: blur(16px) saturate(180%);
+            background-color: rgba(255, 255, 255, 0.75);
+            border: 1px solid rgba(209, 213, 219, 0.3);
+        }
+    </style>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: {
+                            50: '#eff6ff',
+                            500: '#3b82f6',
+                            600: '#2563eb',
+                            700: '#1d4ed8',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useContext, createContext, useMemo } = React;
+
+        // Context for authentication
+        const AuthContext = createContext();
+
+        // Auth Provider Component with enhanced error handling
+        const AuthProvider = ({ children }) => {
+            const [token, setToken] = useState(() => {
+                try {
+                    return localStorage.getItem('token') || null;
+                } catch {
+                    return null;
+                }
+            });
+            const [username, setUsername] = useState(() => {
+                try {
+                    return localStorage.getItem('username') || null;
+                } catch {
+                    return null;
+                }
+            });
+
+            const login = (newToken, newUsername) => {
+                setToken(newToken);
+                setUsername(newUsername);
+                try {
+                    localStorage.setItem('token', newToken);
+                    localStorage.setItem('username', newUsername);
+                } catch (error) {
+                    console.warn('Failed to save to localStorage:', error);
+                }
+            };
+
+            const logout = () => {
+                setToken(null);
+                setUsername(null);
+                try {
+                    localStorage.removeItem('token');
+                    localStorage.removeItem('username');
+                } catch (error) {
+                    console.warn('Failed to clear localStorage:', error);
+                }
+            };
+
+            const isAuthenticated = !!token;
+
+            return (
+                <AuthContext.Provider value={{ token, username, login, logout, isAuthenticated }}>
+                    {children}
+                </AuthContext.Provider>
+            );
+        };        const useAuth = () => useContext(AuthContext);
+
+        // API Base URL
+        const API_BASE = 'http://127.0.0.1:8000';
+
+        // API Helper Functions
+        const apiCall = async (endpoint, options = {}) => {
+            const url = `${API_BASE}${endpoint}`;
+            const config = {
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...options.headers
+                },
+                ...options
+            };
+
+            const response = await fetch(url, config);
+            
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({ detail: 'An error occurred' }));
+                throw new Error(errorData.detail || `HTTP error! status: ${response.status}`);
+            }
+
+            if (response.status === 204) {
+                return null;
+            }
+
+            return await response.json();
+        };
+
+        // Loading Spinner Component
+        const LoadingSpinner = () => (
+            <div className="flex justify-center items-center">
+                <div className="spinner"></div>
+            </div>
+        );
+
+        // Enhanced Error Message Component
+        const ErrorMessage = ({ message, onClose }) => (
+            <div className="bg-red-50 border-l-4 border-red-400 p-4 mb-4 rounded-r-lg fade-in">
+                <div className="flex items-center">
+                    <div className="flex-shrink-0">
+                        <i className="fas fa-exclamation-circle text-red-400"></i>
+                    </div>
+                    <div className="ml-3 flex-1">
+                        <p className="text-sm text-red-700">{message}</p>
+                    </div>
+                    {onClose && (
+                        <div className="ml-auto pl-3">
+                            <button
+                                onClick={onClose}
+                                className="inline-flex text-red-400 hover:text-red-600 focus:outline-none"
+                            >
+                                <i className="fas fa-times"></i>
+                            </button>
+                        </div>
+                    )}
+                </div>
+            </div>
+        );
+
+        // Enhanced Success Message Component
+        const SuccessMessage = ({ message, onClose }) => (
+            <div className="bg-green-50 border-l-4 border-green-400 p-4 mb-4 rounded-r-lg fade-in">
+                <div className="flex items-center">
+                    <div className="flex-shrink-0">
+                        <i className="fas fa-check-circle text-green-400"></i>
+                    </div>
+                    <div className="ml-3 flex-1">
+                        <p className="text-sm text-green-700">{message}</p>
+                    </div>
+                    {onClose && (
+                        <div className="ml-auto pl-3">
+                            <button
+                                onClick={onClose}
+                                className="inline-flex text-green-400 hover:text-green-600 focus:outline-none"
+                            >
+                                <i className="fas fa-times"></i>
+                            </button>
+                        </div>
+                    )}
+                </div>
+            </div>
+        );
+
+        // Enhanced Login Component
+        const Login = ({ onSwitchToRegister }) => {
+            const [username, setUsername] = useState('');
+            const [password, setPassword] = useState('');
+            const [loading, setLoading] = useState(false);
+            const [error, setError] = useState('');
+            const [showPassword, setShowPassword] = useState(false);
+            const { login } = useAuth();
+
+            const handleSubmit = async (e) => {
+                e.preventDefault();
+                if (!username.trim() || !password.trim()) {
+                    setError('Please fill in all fields');
+                    return;
+                }
+                
+                setLoading(true);
+                setError('');
+
+                try {
+                    const response = await apiCall('/token', {
+                        method: 'POST',
+                        body: JSON.stringify({ username: username.trim(), password })
+                    });
+
+                    login(response.access_token, username.trim());
+                } catch (err) {
+                    setError(err.message || 'Login failed. Please try again.');
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            return (
+                <div className="min-h-screen gradient-bg flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8">
+                    <div className="max-w-md w-full">
+                        <div className="glass-effect rounded-2xl shadow-2xl p-8 fade-in">
+                            <div className="text-center mb-8">
+                                <i className="fas fa-tasks text-4xl text-primary-600 mb-4"></i>
+                                <h2 className="text-3xl font-bold text-gray-900">Welcome Back</h2>
+                                <p className="mt-2 text-sm text-gray-600">Sign in to manage your tasks</p>
+                            </div>
+                            
+                            <form className="space-y-6" onSubmit={handleSubmit}>
+                                {error && <ErrorMessage message={error} onClose={() => setError('')} />}
+                                
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                                        Username
+                                    </label>
+                                    <div className="relative">
+                                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                                            <i className="fas fa-user text-gray-400"></i>
+                                        </div>
+                                        <input
+                                            type="text"
+                                            required
+                                            className="block w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-200"
+                                            placeholder="Enter your username"
+                                            value={username}
+                                            onChange={(e) => setUsername(e.target.value)}
+                                        />
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                                        Password
+                                    </label>
+                                    <div className="relative">
+                                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                                            <i className="fas fa-lock text-gray-400"></i>
+                                        </div>
+                                        <input
+                                            type={showPassword ? "text" : "password"}
+                                            required
+                                            className="block w-full pl-10 pr-12 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-200"
+                                            placeholder="Enter your password"
+                                            value={password}
+                                            onChange={(e) => setPassword(e.target.value)}
+                                        />
+                                        <button
+                                            type="button"
+                                            className="absolute inset-y-0 right-0 pr-3 flex items-center"
+                                            onClick={() => setShowPassword(!showPassword)}
+                                        >
+                                            <i className={`fas ${showPassword ? 'fa-eye-slash' : 'fa-eye'} text-gray-400 hover:text-gray-600`}></i>
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <button
+                                    type="submit"
+                                    disabled={loading}
+                                    className="w-full flex justify-center items-center py-3 px-4 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200"
+                                >
+                                    {loading ? (
+                                        <>
+                                            <LoadingSpinner />
+                                            <span className="ml-2">Signing in...</span>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <i className="fas fa-sign-in-alt mr-2"></i>
+                                            Sign In
+                                        </>
+                                    )}
+                                </button>
+
+                                <div className="text-center">
+                                    <button
+                                        type="button"
+                                        onClick={onSwitchToRegister}
+                                        className="text-primary-600 hover:text-primary-500 font-medium transition-colors duration-200"
+                                    >
+                                        Don't have an account? Create one
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        // Enhanced Register Component
+        const Register = ({ onSwitchToLogin }) => {
+            const [username, setUsername] = useState('');
+            const [password, setPassword] = useState('');
+            const [confirmPassword, setConfirmPassword] = useState('');
+            const [loading, setLoading] = useState(false);
+            const [error, setError] = useState('');
+            const [success, setSuccess] = useState('');
+            const [showPassword, setShowPassword] = useState(false);
+
+            const validateForm = () => {
+                if (!username.trim()) {
+                    setError('Username is required');
+                    return false;
+                }
+                if (username.trim().length < 3) {
+                    setError('Username must be at least 3 characters long');
+                    return false;
+                }
+                if (!password) {
+                    setError('Password is required');
+                    return false;
+                }
+                if (password.length < 6) {
+                    setError('Password must be at least 6 characters long');
+                    return false;
+                }
+                if (password !== confirmPassword) {
+                    setError('Passwords do not match');
+                    return false;
+                }
+                return true;
+            };
+
+            const handleSubmit = async (e) => {
+                e.preventDefault();
+                setError('');
+                setSuccess('');
+
+                if (!validateForm()) return;
+
+                setLoading(true);
+
+                try {
+                    await apiCall('/register/', {
+                        method: 'POST',
+                        body: JSON.stringify({ username: username.trim(), password })
+                    });
+
+                    setSuccess('Account created successfully! You can now sign in.');
+                    setUsername('');
+                    setPassword('');
+                    setConfirmPassword('');
+                    setTimeout(() => onSwitchToLogin(), 2000);
+                } catch (err) {
+                    setError(err.message || 'Registration failed. Please try again.');
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            return (
+                <div className="min-h-screen gradient-bg flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8">
+                    <div className="max-w-md w-full">
+                        <div className="glass-effect rounded-2xl shadow-2xl p-8 fade-in">
+                            <div className="text-center mb-8">
+                                <i className="fas fa-user-plus text-4xl text-primary-600 mb-4"></i>
+                                <h2 className="text-3xl font-bold text-gray-900">Create Account</h2>
+                                <p className="mt-2 text-sm text-gray-600">Join us to start managing your tasks</p>
+                            </div>
+                            
+                            <form className="space-y-6" onSubmit={handleSubmit}>
+                                {error && <ErrorMessage message={error} onClose={() => setError('')} />}
+                                {success && <SuccessMessage message={success} onClose={() => setSuccess('')} />}
+                                
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                                        Username
+                                    </label>
+                                    <div className="relative">
+                                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                                            <i className="fas fa-user text-gray-400"></i>
+                                        </div>
+                                        <input
+                                            type="text"
+                                            required
+                                            className="block w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-200"
+                                            placeholder="Choose a username"
+                                            value={username}
+                                            onChange={(e) => setUsername(e.target.value)}
+                                        />
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                                        Password
+                                    </label>
+                                    <div className="relative">
+                                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                                            <i className="fas fa-lock text-gray-400"></i>
+                                        </div>
+                                        <input
+                                            type={showPassword ? "text" : "password"}
+                                            required
+                                            className="block w-full pl-10 pr-12 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-200"
+                                            placeholder="Create a password"
+                                            value={password}
+                                            onChange={(e) => setPassword(e.target.value)}
+                                        />
+                                        <button
+                                            type="button"
+                                            className="absolute inset-y-0 right-0 pr-3 flex items-center"
+                                            onClick={() => setShowPassword(!showPassword)}
+                                        >
+                                            <i className={`fas ${showPassword ? 'fa-eye-slash' : 'fa-eye'} text-gray-400 hover:text-gray-600`}></i>
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                                        Confirm Password
+                                    </label>
+                                    <div className="relative">
+                                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                                            <i className="fas fa-lock text-gray-400"></i>
+                                        </div>
+                                        <input
+                                            type={showPassword ? "text" : "password"}
+                                            required
+                                            className="block w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-200"
+                                            placeholder="Confirm your password"
+                                            value={confirmPassword}
+                                            onChange={(e) => setConfirmPassword(e.target.value)}
+                                        />
+                                    </div>
+                                </div>
+
+                                <button
+                                    type="submit"
+                                    disabled={loading}
+                                    className="w-full flex justify-center items-center py-3 px-4 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200"
+                                >
+                                    {loading ? (
+                                        <>
+                                            <LoadingSpinner />
+                                            <span className="ml-2">Creating account...</span>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <i className="fas fa-user-plus mr-2"></i>
+                                            Create Account
+                                        </>
+                                    )}
+                                </button>
+
+                                <div className="text-center">
+                                    <button
+                                        type="button"
+                                        onClick={onSwitchToLogin}
+                                        className="text-primary-600 hover:text-primary-500 font-medium transition-colors duration-200"
+                                    >
+                                        Already have an account? Sign in
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        // Enhanced Todo Item Component
+        const TodoItem = ({ todo, onUpdate, onDelete }) => {
+            const [isEditing, setIsEditing] = useState(false);
+            const [editTask, setEditTask] = useState(todo.task);
+            const [loading, setLoading] = useState(false);
+            const [error, setError] = useState('');
+
+            const handleToggleComplete = async () => {
+                setLoading(true);
+                try {
+                    await onUpdate(todo.id, { ...todo, completed: !todo.completed });
+                } catch (err) {
+                    setError(err.message);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const handleSaveEdit = async () => {
+                if (editTask.trim().length < 5 || editTask.trim().length > 100) {
+                    setError('Task must be between 5 and 100 characters');
+                    return;
+                }
+
+                setLoading(true);
+                setError('');
+                try {
+                    await onUpdate(todo.id, { ...todo, task: editTask.trim() });
+                    setIsEditing(false);
+                } catch (err) {
+                    setError(err.message);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const handleDelete = async () => {
+                if (!window.confirm('Are you sure you want to delete this task?')) {
+                    return;
+                }
+                setLoading(true);
+                try {
+                    await onDelete(todo.id);
+                } catch (err) {
+                    setError(err.message);
+                    setLoading(false);
+                }
+            };
+
+            const handleKeyPress = (e) => {
+                if (e.key === 'Enter') {
+                    handleSaveEdit();
+                } else if (e.key === 'Escape') {
+                    setIsEditing(false);
+                    setEditTask(todo.task);
+                    setError('');
+                }
+            };
+
+            return (
+                <div className={`bg-white rounded-xl shadow-sm border border-gray-200 p-4 mb-3 fade-in hover:shadow-md transition-all duration-200 ${todo.completed ? 'opacity-75' : ''}`}>
+                    {error && <ErrorMessage message={error} onClose={() => setError('')} />}
+                    
+                    <div className="flex items-center justify-between">
+                        <div className="flex items-center flex-1">
+                            <button
+                                onClick={handleToggleComplete}
+                                disabled={loading}
+                                className={`mr-3 w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all duration-200 ${
+                                    todo.completed 
+                                        ? 'bg-green-500 border-green-500 text-white' 
+                                        : 'border-gray-300 hover:border-green-400'
+                                } ${loading ? 'opacity-50' : ''}`}
+                            >
+                                {todo.completed && <i className="fas fa-check text-xs"></i>}
+                            </button>
+                            
+                            {isEditing ? (
+                                <div className="flex-1 mr-3">
+                                    <input
+                                        type="text"
+                                        value={editTask}
+                                        onChange={(e) => setEditTask(e.target.value)}
+                                        onKeyDown={handleKeyPress}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                                        minLength={5}
+                                        maxLength={100}
+                                        autoFocus
+                                    />
+                                    <div className="mt-1 text-xs text-gray-500">
+                                        {editTask.length}/100 characters | Press Enter to save, Esc to cancel
+                                    </div>
+                                </div>
+                            ) : (
+                                <div className="flex-1 flex items-center">
+                                    <span className={`${todo.completed ? 'line-through text-gray-500' : 'text-gray-900'} transition-all duration-200`}>
+                                        {todo.task}
+                                    </span>
+                                    {todo.completed && (
+                                        <span className="ml-2 inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                                            <i className="fas fa-check mr-1"></i>
+                                            Completed
+                                        </span>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+
+                        <div className="flex items-center space-x-2">
+                            {loading && <LoadingSpinner />}
+                            
+                            {isEditing ? (
+                                <>
+                                    <button
+                                        onClick={handleSaveEdit}
+                                        disabled={loading || editTask.trim().length < 5}
+                                        className="p-2 text-green-600 hover:text-green-800 hover:bg-green-50 rounded-lg transition-all duration-200 disabled:opacity-50"
+                                        title="Save changes"
+                                    >
+                                        <i className="fas fa-save"></i>
+                                    </button>
+                                    <button
+                                        onClick={() => {
+                                            setIsEditing(false);
+                                            setEditTask(todo.task);
+                                            setError('');
+                                        }}
+                                        disabled={loading}
+                                        className="p-2 text-gray-600 hover:text-gray-800 hover:bg-gray-50 rounded-lg transition-all duration-200 disabled:opacity-50"
+                                        title="Cancel editing"
+                                    >
+                                        <i className="fas fa-times"></i>
+                                    </button>
+                                </>
+                            ) : (
+                                <>
+                                    <button
+                                        onClick={() => setIsEditing(true)}
+                                        disabled={loading}
+                                        className="p-2 text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded-lg transition-all duration-200 disabled:opacity-50"
+                                        title="Edit task"
+                                    >
+                                        <i className="fas fa-edit"></i>
+                                    </button>
+                                    <button
+                                        onClick={handleDelete}
+                                        disabled={loading}
+                                        className="p-2 text-red-600 hover:text-red-800 hover:bg-red-50 rounded-lg transition-all duration-200 disabled:opacity-50"
+                                        title="Delete task"
+                                    >
+                                        <i className="fas fa-trash"></i>
+                                    </button>
+                                </>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        // Enhanced Add Todo Form Component
+        const AddTodoForm = ({ onAdd }) => {
+            const [task, setTask] = useState('');
+            const [loading, setLoading] = useState(false);
+            const [error, setError] = useState('');
+
+            const handleSubmit = async (e) => {
+                e.preventDefault();
+                const trimmedTask = task.trim();
+                
+                if (trimmedTask.length < 5 || trimmedTask.length > 100) {
+                    setError('Task must be between 5 and 100 characters');
+                    return;
+                }
+
+                setLoading(true);
+                setError('');
+                try {
+                    await onAdd({ task: trimmedTask, completed: false });
+                    setTask('');
+                } catch (err) {
+                    setError(err.message);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const handleKeyPress = (e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    handleSubmit(e);
+                }
+            };
+
+            return (
+                <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-6">
+                    <div className="flex items-center mb-4">
+                        <i className="fas fa-plus-circle text-primary-600 text-xl mr-3"></i>
+                        <h3 className="text-lg font-semibold text-gray-900">Add New Task</h3>
+                    </div>
+                    
+                    {error && <ErrorMessage message={error} onClose={() => setError('')} />}
+                    
+                    <form onSubmit={handleSubmit}>
+                        <div className="flex gap-3">
+                            <div className="flex-1">
+                                <div className="relative">
+                                    <input
+                                        type="text"
+                                        value={task}
+                                        onChange={(e) => setTask(e.target.value)}
+                                        onKeyPress={handleKeyPress}
+                                        placeholder="What needs to be done? (5-100 characters)"
+                                        className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-200 pr-16"
+                                        minLength={5}
+                                        maxLength={100}
+                                        required
+                                    />
+                                    <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
+                                        <span className={`text-xs ${task.length > 100 ? 'text-red-500' : task.length > 80 ? 'text-yellow-500' : 'text-gray-400'}`}>
+                                            {task.length}/100
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+                            <button
+                                type="submit"
+                                disabled={loading || task.trim().length < 5}
+                                className="px-6 py-3 bg-primary-600 text-white rounded-lg hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 flex items-center"
+                            >
+                                {loading ? (
+                                    <LoadingSpinner />
+                                ) : (
+                                    <>
+                                        <i className="fas fa-plus mr-2"></i>
+                                        Add Task
+                                    </>
+                                )}
+                            </button>
+                        </div>
+                        <div className="mt-2 text-xs text-gray-500">
+                            Press Enter to add task quickly
+                        </div>
+                    </form>
+                </div>
+            );
+        };
+
+        // Enhanced Todo Dashboard Component
+        const TodoDashboard = () => {
+            const [todos, setTodos] = useState([]);
+            const [loading, setLoading] = useState(true);
+            const [error, setError] = useState('');
+            const [filter, setFilter] = useState('all'); // all, active, completed
+            const [sortBy, setSortBy] = useState('newest'); // newest, oldest, alphabetical
+            const { token, username, logout } = useAuth();
+
+            const fetchTodos = async () => {
+                try {
+                    const data = await apiCall('/todos/', {
+                        method: 'GET',
+                        headers: {
+                            'Authorization': `Bearer ${token}`
+                        }
+                    });
+                    setTodos(data);
+                } catch (err) {
+                    setError(err.message);
+                    if (err.message.includes('401') || err.message.includes('credentials')) {
+                        logout();
+                    }
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            useEffect(() => {
+                fetchTodos();
+            }, []);
+
+            const handleAddTodo = async (newTodo) => {
+                const data = await apiCall('/todos/', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    },
+                    body: JSON.stringify(newTodo)
+                });
+                setTodos([...todos, data]);
+            };
+
+            const handleUpdateTodo = async (id, updatedTodo) => {
+                const data = await apiCall(`/todos/${id}`, {
+                    method: 'PUT',
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    },
+                    body: JSON.stringify(updatedTodo)
+                });
+                setTodos(todos.map(todo => todo.id === id ? data : todo));
+            };
+
+            const handleDeleteTodo = async (id) => {
+                await apiCall(`/todos/${id}`, {
+                    method: 'DELETE',
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    }
+                });
+                setTodos(todos.filter(todo => todo.id !== id));
+            };
+
+            // Filter and sort todos
+            const filteredAndSortedTodos = useMemo(() => {
+                let filtered = todos;
+                
+                // Apply filter
+                switch (filter) {
+                    case 'active':
+                        filtered = todos.filter(todo => !todo.completed);
+                        break;
+                    case 'completed':
+                        filtered = todos.filter(todo => todo.completed);
+                        break;
+                    default:
+                        filtered = todos;
+                }
+
+                // Apply sort
+                switch (sortBy) {
+                    case 'oldest':
+                        return filtered.sort((a, b) => a.id - b.id);
+                    case 'alphabetical':
+                        return filtered.sort((a, b) => a.task.localeCompare(b.task));
+                    case 'newest':
+                    default:
+                        return filtered.sort((a, b) => b.id - a.id);
+                }
+            }, [todos, filter, sortBy]);
+
+            const stats = useMemo(() => {
+                const total = todos.length;
+                const completed = todos.filter(todo => todo.completed).length;
+                const active = total - completed;
+                const completionRate = total > 0 ? Math.round((completed / total) * 100) : 0;
+                
+                return { total, completed, active, completionRate };
+            }, [todos]);
+
+            if (loading) {
+                return (
+                    <div className="min-h-screen gradient-bg flex items-center justify-center">
+                        <div className="text-center">
+                            <LoadingSpinner />
+                            <p className="mt-4 text-white">Loading your tasks...</p>
+                        </div>
+                    </div>
+                );
+            }
+
+            return (
+                <div className="min-h-screen bg-gray-50">
+                    <div className="max-w-4xl mx-auto py-8 px-4 sm:px-6 lg:px-8">
+                        {/* Enhanced Header */}
+                        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-6">
+                            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                                <div>
+                                    <div className="flex items-center">
+                                        <i className="fas fa-tasks text-2xl text-primary-600 mr-3"></i>
+                                        <h1 className="text-3xl font-bold text-gray-900">My Tasks</h1>
+                                    </div>
+                                    <p className="text-gray-600 mt-1">Welcome back, <span className="font-medium">{username}</span>!</p>
+                                </div>
+                                <div className="flex items-center gap-4">
+                                    <div className="text-right">
+                                        <div className="text-sm text-gray-600">
+                                            {stats.completed} of {stats.total} completed
+                                        </div>
+                                        <div className="text-xs text-gray-500">
+                                            {stats.completionRate}% completion rate
+                                        </div>
+                                    </div>
+                                    <button
+                                        onClick={logout}
+                                        className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 transition-all duration-200 flex items-center"
+                                    >
+                                        <i className="fas fa-sign-out-alt mr-2"></i>
+                                        Logout
+                                    </button>
+                                </div>
+                            </div>
+                            
+                            {/* Stats Cards */}
+                            <div className="grid grid-cols-3 gap-4 mt-6">
+                                <div className="bg-blue-50 rounded-lg p-4 text-center">
+                                    <div className="text-2xl font-bold text-blue-600">{stats.total}</div>
+                                    <div className="text-sm text-blue-600">Total Tasks</div>
+                                </div>
+                                <div className="bg-yellow-50 rounded-lg p-4 text-center">
+                                    <div className="text-2xl font-bold text-yellow-600">{stats.active}</div>
+                                    <div className="text-sm text-yellow-600">Active</div>
+                                </div>
+                                <div className="bg-green-50 rounded-lg p-4 text-center">
+                                    <div className="text-2xl font-bold text-green-600">{stats.completed}</div>
+                                    <div className="text-sm text-green-600">Completed</div>
+                                </div>
+                            </div>
+                            
+                            {/* Progress Bar */}
+                            <div className="mt-4">
+                                <div className="flex justify-between text-sm text-gray-600 mb-1">
+                                    <span>Progress</span>
+                                    <span>{stats.completionRate}%</span>
+                                </div>
+                                <div className="bg-gray-200 rounded-full h-2">
+                                    <div 
+                                        className="bg-gradient-to-r from-primary-500 to-primary-600 h-2 rounded-full transition-all duration-500"
+                                        style={{ width: `${stats.completionRate}%` }}
+                                    ></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        {error && <ErrorMessage message={error} onClose={() => setError('')} />}
+
+                        {/* Add Todo Form */}
+                        <AddTodoForm onAdd={handleAddTodo} />
+
+                        {/* Filters and Sort */}
+                        {todos.length > 0 && (
+                            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4 mb-6">
+                                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-sm font-medium text-gray-700">Filter:</span>
+                                        <div className="flex rounded-lg border border-gray-300 overflow-hidden">
+                                            {[
+                                                { key: 'all', label: 'All', icon: 'fa-list' },
+                                                { key: 'active', label: 'Active', icon: 'fa-clock' },
+                                                { key: 'completed', label: 'Completed', icon: 'fa-check' }
+                                            ].map(({ key, label, icon }) => (
+                                                <button
+                                                    key={key}
+                                                    onClick={() => setFilter(key)}
+                                                    className={`px-3 py-1 text-xs font-medium transition-all duration-200 flex items-center ${
+                                                        filter === key
+                                                            ? 'bg-primary-600 text-white'
+                                                            : 'bg-white text-gray-700 hover:bg-gray-50'
+                                                    }`}
+                                                >
+                                                    <i className={`fas ${icon} mr-1`}></i>
+                                                    {label}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+                                    
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-sm font-medium text-gray-700">Sort:</span>
+                                        <select
+                                            value={sortBy}
+                                            onChange={(e) => setSortBy(e.target.value)}
+                                            className="text-xs border border-gray-300 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-primary-500"
+                                        >
+                                            <option value="newest">Newest First</option>
+                                            <option value="oldest">Oldest First</option>
+                                            <option value="alphabetical">Alphabetical</option>
+                                        </select>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Todo List */}
+                        <div>
+                            {filteredAndSortedTodos.length === 0 ? (
+                                <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-12 text-center">
+                                    <div className="text-gray-400 mb-4">
+                                        <i className={`fas ${
+                                            filter === 'completed' ? 'fa-check-circle' :
+                                            filter === 'active' ? 'fa-clock' : 'fa-tasks'
+                                        } text-6xl`}></i>
+                                    </div>
+                                    <h3 className="text-lg font-medium text-gray-900 mb-2">
+                                        {filter === 'completed' ? 'No completed tasks' :
+                                         filter === 'active' ? 'No active tasks' : 'No tasks yet'}
+                                    </h3>
+                                    <p className="text-gray-500">
+                                        {filter === 'completed' ? 'Complete some tasks to see them here!' :
+                                         filter === 'active' ? 'All tasks are completed! 🎉' : 'Add your first task above to get started!'}
+                                    </p>
+                                </div>
+                            ) : (
+                                <div>
+                                    <div className="flex items-center justify-between mb-4">
+                                        <h2 className="text-xl font-semibold text-gray-900">
+                                            {filter === 'all' ? 'All Tasks' : 
+                                             filter === 'active' ? 'Active Tasks' : 'Completed Tasks'}
+                                        </h2>
+                                        <span className="text-sm text-gray-500">
+                                            {filteredAndSortedTodos.length} task{filteredAndSortedTodos.length !== 1 ? 's' : ''}
+                                        </span>
+                                    </div>
+                                    {filteredAndSortedTodos.map(todo => (
+                                        <TodoItem
+                                            key={todo.id}
+                                            todo={todo}
+                                            onUpdate={handleUpdateTodo}
+                                            onDelete={handleDeleteTodo}
+                                        />
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        // Main App Component
+        const AppContent = () => {
+            const [showRegister, setShowRegister] = useState(false);
+            const { isAuthenticated } = useAuth();
+
+            if (isAuthenticated) {
+                return <TodoDashboard />;
+            }
+
+            return showRegister ? (
+                <Register onSwitchToLogin={() => setShowRegister(false)} />
+            ) : (
+                <Login onSwitchToRegister={() => setShowRegister(true)} />
+            );
+        };
+
+        const App = () => {
+            try {
+                return (
+                    <AuthProvider>
+                        <AppContent />
+                    </AuthProvider>
+                );
+            } catch (error) {
+                console.error('App render error:', error);
+                return (
+                    <div className="min-h-screen flex items-center justify-center bg-gray-50">
+                        <div className="text-center">
+                            <h1 className="text-2xl font-bold text-red-600 mb-4">Application Error</h1>
+                            <p className="text-gray-600">{error.message}</p>
+                        </div>
+                    </div>
+                );
+            }
+        };
+
+        // Render the App
+        ReactDOM.render(
+            <App />,
+            document.getElementById('root')
+        );
+    </script>
+</body>
+</html>

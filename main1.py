@@ -1,10 +1,20 @@
 from fastapi import FastAPI, HTTPException, Depends
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import Dict, List
-from .security import create_access_token, verify_password, get_password_hash, get_current_user
+from security import create_access_token, verify_password, get_password_hash, get_current_user
 
 # Create FastAPI instance
 app = FastAPI()
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allows all origins
+    allow_credentials=True,
+    allow_methods=["*"],  # Allows all methods
+    allow_headers=["*"],  # Allows all headers
+)
 
 # Pydantic models for users
 class UserInDB(BaseModel):
@@ -17,7 +27,12 @@ class UserLogin(BaseModel):
 
 # Pydantic model with validation for a To-Do item
 class ToDoItem(BaseModel):
-    id: int = Field(default=None)  # ID is optional on creation
+    id: int
+    task: str = Field(min_length=5, max_length=100) # Task must be between 5 and 100 characters
+    completed: bool = False
+
+# Pydantic model for creating a To-Do item (without ID)
+class ToDoCreate(BaseModel):
     task: str = Field(min_length=5, max_length=100) # Task must be between 5 and 100 characters
     completed: bool = False
 
@@ -55,12 +70,12 @@ def login_for_access_token(form_data: UserLogin):
 
 # CREATE: Add a new task
 @app.post("/todos/", response_model=ToDoItem)
-def create_todo(item: ToDoItem, current_user: dict = Depends(get_current_user)):
+def create_todo(item: ToDoCreate, current_user: dict = Depends(get_current_user)):
     global next_id
-    item.id = next_id
-    db[next_id] = item
+    new_todo = ToDoItem(id=next_id, task=item.task, completed=item.completed)
+    db[next_id] = new_todo
     next_id += 1
-    return item
+    return new_todo
 
 # READ: Get all tasks
 @app.get("/todos/", response_model=List[ToDoItem])
@@ -79,6 +94,8 @@ def get_todo_by_id(todo_id: int, current_user: dict = Depends(get_current_user))
 def update_todo(todo_id: int, updated_item: ToDoItem, current_user: dict = Depends(get_current_user)):
     if todo_id not in db:
         raise HTTPException(status_code=404, detail="To-Do item not found")
+    # Ensure the ID in the URL matches the ID in the body
+    updated_item.id = todo_id
     db[todo_id] = updated_item
     return updated_item
 

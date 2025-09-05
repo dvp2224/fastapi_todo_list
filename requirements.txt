@@ -1,0 +1,21 @@
+# FastAPI To-Do List Application Dependencies
+# 
+# Core Framework
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+
+# Authentication & Security
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+
+# Data Validation
+pydantic==2.5.0
+
+# Development Dependencies (optional)
+# pytest==7.4.3
+# httpx==0.25.2
+# python-multipart==0.0.6
+
+# Production Dependencies (optional)
+# python-dotenv==1.0.0
+# gunicorn==21.2.0
